@@ -1,18 +1,18 @@
 # Required Libraries
 
+from sklearn import preprocessing
+from sklearn.preprocessing import MinMaxScaler
 import tensorflow as tf
 import numpy as np
 import pandas as pd
 from tensorflow import keras
 from tensorflow.keras import layers
-from sklearn import preprocessing
-from sklearn.preprocessing import MinMaxScaler
 import math
 import random
 import socket
 
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 from util.get_dataset import get_tr_test_data
 from util.data_transfer import tcp_server, tcp_sender
