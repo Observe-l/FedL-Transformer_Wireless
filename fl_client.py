@@ -16,9 +16,12 @@ import os
 
 from util.get_dataset import get_tr_test_data
 from util.data_transfer import tcp_server, tcp_sender
-SERVER_IP = '192.168.1.111'
-CLIENT1_IP = '192.168.1.107'
-CLIENT2_IP = '192.168.1.192'
+
+SERVER_IP = '192.168.1.110'
+CLIENT1_IP = '192.168.1.111'
+CLIENT2_IP = '192.168.1.199'
+CLIENT3_IP = '192.168.1.107'
+CLIENT4_IP = '192.168.1.192'
 
 SERVER_PORT = 19998
 

@@ -17,9 +17,11 @@ import os
 from util.get_dataset import get_tr_test_data
 from util.data_transfer import tcp_server, tcp_sender
 
-SERVER_IP = '192.168.1.111'
-CLIENT1_IP = '192.168.1.107'
-CLIENT2_IP = '192.168.1.192'
+SERVER_IP = '192.168.1.110'
+CLIENT1_IP = '192.168.1.111'
+CLIENT2_IP = '192.168.1.199'
+CLIENT3_IP = '192.168.1.107'
+CLIENT4_IP = '192.168.1.192'
 
 SERVER_PORT = 19998
 
@@ -240,6 +242,7 @@ if __name__ == "__main__":
     conn1, addr1 = server_socket.accept()
     print(f'Connection from {addr1}, waitting for 2nd connection')
     conn2, addr2 = server_socket.accept()
+    print(f'Connection from {addr2}')
     conn_list = [conn1, conn2]
 
     X_tr, Y_tr, X_test_1, Y_test_1, cov_adj_mat_1 = get_tr_test_data(tr_dp_1, te_dp_1, gt_dp_1)
