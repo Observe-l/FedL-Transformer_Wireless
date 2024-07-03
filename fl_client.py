@@ -242,6 +242,7 @@ if __name__ == "__main__":
     node_info = {"node":node_id}
     ###Communication Rounds Loop
     input("Press Enter to continue...")
+    print(f"Node {node_id} start training")
     for i in range(num_comm_rounds):
         # Train One Communication Round
         local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
