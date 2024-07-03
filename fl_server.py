@@ -260,7 +260,11 @@ if __name__ == "__main__":
             tmp_weight, client_info = udp_server(server_socket,start_flag=start_flag)
             # Finish the loop when timeout
             if client_info == 'complete':
-                break
+                if all(len(sub_dict) != 0  for sub_dict in client_weights.values()):
+                    break
+                else:
+                    start_flag = True
+                    continue
             start_flag = False
             # Add weights into the dictionary
             client_weights[client_info['node']][client_info['weight']] = tmp_weight
