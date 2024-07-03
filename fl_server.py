@@ -12,6 +12,7 @@ import random
 import socket
 
 import os
+import optparse
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 from util.get_dataset import get_tr_test_data
@@ -189,12 +190,21 @@ def aggregate_weights(client_weights):
         list: A list containing the averaged weights.
     """
     # Stack the weights along a new dimension
-    stacked_weights = [np.stack([client_weights[j][i] for j in range(len(client_weights))], axis=0, dtype=np.float32) for i in range(len(client_weights[0]))]
+    stacked_weights = [np.stack([client_weights[j][i] for j in range(len(client_weights))], axis=0).astype(np.float32) for i in range(len(client_weights[0]))]
     
     # Calculate the average along the new dimension
     averaged_weights = [np.average(weight, axis=0) for weight in stacked_weights]
     
     return averaged_weights
+
+def get_options():
+    optParse = optparse.OptionParser()
+    optParse.add_option("-i","--id",default=0,type=int,help="Node ID")
+    optParse.add_option("-b","--batch",default=1024,type=int,help="Node ID")
+    optParse.add_option("-e","--epoch",default=10,type=int,help="Node ID")
+    optParse.add_option("-r","--round",default=10,type=int,help="Node ID")
+    options, args = optParse.parse_args()
+    return options
 
 # Can use following input arguments
 #num_attn_heads = 3
@@ -210,15 +220,16 @@ def aggregate_weights(client_weights):
 if __name__ == "__main__":
     #Server Side
     #Datapaths (Put datapaths here)
+    options = get_options()
     tr_dp_1 = './dataset/train_FD001.txt'
     te_dp_1 = './dataset/test_FD001.txt'
     gt_dp_1 = './dataset/RUL_FD001.txt'
     # FL parameters (Set These)
     C = 5
-    num_total_clients = 2
+    num_total_clients = 4
     # num_clients_per_round = C * num_total_clients
     num_clients_per_round = 2
-    num_comm_rounds = 10
+    num_comm_rounds = options.round
 
     ###Define model
     # Can use following input arguments
@@ -250,7 +261,7 @@ if __name__ == "__main__":
     server_info = {"node":999}
     weight_len = len(global_model.weights)
     ###Communication Rounds Loop
-    for i in range(num_comm_rounds):
+    for tmp_round in range(num_comm_rounds):
 
         # Get Weights from all Clients, Create a dictionary and a list
         client_weights = {client_id:{} for client_id in range(CLIENT_NUM)}
@@ -281,11 +292,9 @@ if __name__ == "__main__":
                 tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
                 client_weights[tmp_client_id][tmp_idx] = tmp_weight
         # Sort the dictionary and add to the list
-        # sort_weight_dict = {tmp_client_id:dict(sorted(tmp_client_weight.items())) for tmp_client_id, tmp_client_weight in client_weights.items()}
-        # Sort the dictionary and add to the list
         weight_list = [list(dict(sorted(tmp_client_weight.items())).values()) for  tmp_client_weight in client_weights.values()]
         
-        print(f"Aggregate weight for round {i}")
+        print(f"Aggregate weight for round {tmp_round}")
         aggregate_weight = aggregate_weights(weight_list)
 
         for weight_id in range(weight_len):

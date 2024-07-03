@@ -183,6 +183,9 @@ def get_transformer_model(num_features, num_attn_heads, hidden_layer_dim, num_tr
 def get_options():
     optParse = optparse.OptionParser()
     optParse.add_option("-i","--id",default=0,type=int,help="Node ID")
+    optParse.add_option("-b","--batch",default=1024,type=int,help="Node ID")
+    optParse.add_option("-e","--epoch",default=10,type=int,help="Node ID")
+    optParse.add_option("-r","--round",default=10,type=int,help="Node ID")
     options, args = optParse.parse_args()
     return options
 
@@ -207,9 +210,9 @@ if __name__ == "__main__":
     gt_dp_1 = f'./dataset/node{node_id}/RUL_FD001.txt'
 
     # FL parameters (Set These)
-    B = 1024
-    E = 10
-    num_comm_rounds = 10
+    B = options.batch
+    E = options.epoch
+    num_comm_rounds = options.round
 
     ###Define model
     # Can use following input arguments
@@ -243,7 +246,7 @@ if __name__ == "__main__":
     ###Communication Rounds Loop
     input("Press Enter to continue...")
     print(f"Node {node_id} start training")
-    for i in range(num_comm_rounds):
+    for tmp_round in range(num_comm_rounds):
         # Train One Communication Round
         local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
         weight_len = len(local_model.weights)
@@ -252,7 +255,7 @@ if __name__ == "__main__":
         #---
         # Put Code Here (Use local_model.weights to get local model weights as a list)
         #---
-        print(f"Round {i} \r\nCommunicate with server...")
+        print(f"Round {tmp_round} \r\nCommunicate with server...")
         for k in range(weight_len):
             # Update client info
             node_info["weight"] = k

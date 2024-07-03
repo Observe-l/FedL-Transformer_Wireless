@@ -283,8 +283,6 @@ if __name__ == "__main__":
                 tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
                 client_weights[tmp_client_id][tmp_idx] = tmp_weight
         # Sort the dictionary and add to the list
-        # sort_weight_dict = {tmp_client_id:dict(sorted(tmp_client_weight.items())) for tmp_client_id, tmp_client_weight in client_weights.items()}
-        # Sort the dictionary and add to the list
         weight_list = [list(dict(sorted(tmp_client_weight.items())).values()) for  tmp_client_weight in client_weights.values()]
         
         print(f"Aggregate weight for round {i}")
