@@ -15,7 +15,7 @@ import os
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 from util.get_dataset import get_tr_test_data
-from util.data_transfer import tcp_server, tcp_sender
+from util.data_transfer import udp_sender, udp_server
 
 SERVER_IP = '192.168.1.110'
 CLIENT1_IP = '192.168.1.111'
@@ -24,6 +24,9 @@ CLIENT3_IP = '192.168.1.107'
 CLIENT4_IP = '192.168.1.192'
 
 SERVER_PORT = 19998
+CLIENT_PORT = 19999
+
+CLIENT_NUM = 4
 
 # Transformer Definition (Dependencies)
 
@@ -187,7 +190,7 @@ def get_transformer_model(num_features, num_attn_heads, hidden_layer_dim, num_tr
 #              Extract Using: time_dim = np.asarray(X_tr).astype(np.float32).shape[-2]
 
 if __name__ == "__main__":
-    #Client Node
+    #Client client
     #Datapaths (Put datapaths here)
     tr_dp_1 = './dataset/train_FD001.txt'
     te_dp_1 = './dataset/test_FD001.txt'
@@ -213,13 +216,10 @@ if __name__ == "__main__":
 
 
     '''
-    TCP version
-    Create TCP socket
+    UDP version
     '''
-    conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Connect to server
-    conn.connect((SERVER_IP,SERVER_PORT))
-    # conn.connect(('127.0.0.1',SERVER_PORT))
+    client_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_sock.bind(('',CLIENT_PORT))
 
     ##Put code to load local model data
     X_tr, Y_tr, X_test_1, Y_test_1, cov_adj_mat_1 = get_tr_test_data(tr_dp_1, te_dp_1, gt_dp_1)
@@ -229,24 +229,52 @@ if __name__ == "__main__":
                                         num_transformer_blocks=3, 
                                         time_dim=np.asarray(X_tr).astype(np.float32).shape[-2])
 
+    node_info = {"node":0}
     ###Communication Rounds Loop
     input("Press Enter to continue...")
     for i in range(num_comm_rounds):
-
-
-
         # Train One Communication Round
         local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
+        weight_len = len(local_model.weights)
 
         # Send Client Weights to server
         #---
         # Put Code Here (Use local_model.weights to get local model weights as a list)
         #---
         print(f"Round {i} \r\nCommunicate with server...")
-        for k in range(len(local_model.weights)):
-            # Send weight to server via TCP
-            tcp_sender(conn, local_model.weights[k].numpy())
-        # Update Local Model
-        for k in range(len(local_model.weights)):
-            tmp_weight = tcp_server(conn)
-            local_model.weights[k].assign(tmp_weight)
+        for k in range(weight_len):
+            # Update client info
+            node_info["weight"] = k
+            # Send weight to server via UDP
+            udp_sender(local_model.weights[k].numpy(),SERVER_IP,SERVER_PORT,node_info)
+
+        ''' 
+        Update Local Model.
+        '''
+        # Init the dictionary of weight and it's id
+        weight_idx = []
+        # Waitting for the first weight without timeout
+        start_flag = True
+        while True:
+            tmp_weight, server_info = udp_server(client_sock,start_flag=start_flag)
+            # Finish the loop when timeout
+            if server_info == 'complete':
+                break
+            start_flag = False
+            # Check the info come from server
+            if server_info['node'] == 999:
+                tmp_id = server_info['weight']
+                weight_idx.append(tmp_id)
+                local_model.weights[tmp_id] = tmp_weight
+            # Check whether complete transfer
+            if len(weight_idx) == weight_len:
+                break
+        # Assign 0 to those lost weight
+        lost_weight = set(range(weight_len)) - set(weight_idx)
+        for tmp_idx in lost_weight:
+            tmp_shape = local_model.weights[tmp_idx].numpy().shape
+            tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
+            local_model.weights[tmp_idx].assign(tmp_weight)
+        
+    
+    client_sock.close()
