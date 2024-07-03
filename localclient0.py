@@ -15,7 +15,7 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 from util.get_dataset import get_tr_test_data
-from util.data_transfer import udp_server, udp_sender
+from util.data_transfer import udp_sender, udp_server
 
 SERVER_IP = '192.168.1.110'
 CLIENT1_IP = '192.168.1.111'
@@ -179,23 +179,6 @@ def get_transformer_model(num_features, num_attn_heads, hidden_layer_dim, num_tr
 
   return model
 
-def aggregate_weights(client_weights):
-    """Aggregate the weights from multiple clients by averaging them.
-    
-    Args:
-        client_weights (list): A list of lists containing the weights from each client.
-    
-    Returns:
-        list: A list containing the averaged weights.
-    """
-    # Stack the weights along a new dimension
-    stacked_weights = [np.stack([client_weights[j][i] for j in range(len(client_weights))], axis=0, dtype=np.float32) for i in range(len(client_weights[0]))]
-    
-    # Calculate the average along the new dimension
-    averaged_weights = [np.average(weight, axis=0) for weight in stacked_weights]
-    
-    return averaged_weights
-
 # Can use following input arguments
 #num_attn_heads = 3
 #hidden_layer_dim = 32  # Hidden layer size in feed forward network inside transformer
@@ -206,18 +189,16 @@ def aggregate_weights(client_weights):
 
 #time_dim : History window size (Secondlast dimension of the dataset)
 #              Extract Using: time_dim = np.asarray(X_tr).astype(np.float32).shape[-2]
-
 if __name__ == "__main__":
-    #Server Side
+    #Client client
     #Datapaths (Put datapaths here)
     tr_dp_1 = './dataset/train_FD001.txt'
     te_dp_1 = './dataset/test_FD001.txt'
     gt_dp_1 = './dataset/RUL_FD001.txt'
+
     # FL parameters (Set These)
-    C = 5
-    num_total_clients = 2
-    # num_clients_per_round = C * num_total_clients
-    num_clients_per_round = 2
+    B = 1024
+    E = 10
     num_comm_rounds = 10
 
     ###Define model
@@ -236,63 +217,64 @@ if __name__ == "__main__":
 
     '''
     UDP version
-    Create UDP socket
     '''
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind(('',SERVER_PORT))
+    client_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_sock.bind(('',19000))
 
+    ##Put code to load local model data
     X_tr, Y_tr, X_test_1, Y_test_1, cov_adj_mat_1 = get_tr_test_data(tr_dp_1, te_dp_1, gt_dp_1)
-    global_model = get_transformer_model(num_features=np.asarray(X_tr).astype(np.float32).shape[-1], 
+    local_model = get_transformer_model(num_features = np.asarray(X_tr).astype(np.float32).shape[-1], 
                                         num_attn_heads=3, 
                                         hidden_layer_dim=32, 
                                         num_transformer_blocks=3, 
                                         time_dim=np.asarray(X_tr).astype(np.float32).shape[-2])
-    server_info = {"node":999}
-    weight_len = len(global_model.weights)
-    ###Communication Rounds Loop
-    for i in range(num_comm_rounds):
 
-        # Get Weights from all Clients, Create a dictionary and a list
-        client_weights = {client_id:{} for client_id in range(CLIENT_NUM)}
-        # Receive weight from client
+    node_info = {"node":0}
+    ###Communication Rounds Loop
+    input("Press Enter to continue...")
+    for i in range(num_comm_rounds):
+        # Train One Communication Round
+        local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
+        weight_len = len(local_model.weights)
+
+        # Send Client Weights to server
+        #---
+        # Put Code Here (Use local_model.weights to get local model weights as a list)
+        #---
+        print(f"Round {i} \r\nCommunicate with server...")
+        for k in range(weight_len):
+            # Update client info
+            node_info["weight"] = k
+            # Send weight to server via UDP
+            udp_sender(local_model.weights[k].numpy(),"localhost",SERVER_PORT,node_info)
+
+        ''' 
+        Update Local Model.
+        '''
+        # Init the dictionary of weight and it's id
+        weight_idx = []
+        # Waitting for the first weight without timeout
         start_flag = True
         while True:
-            tmp_weight, client_info = udp_server(server_socket,start_flag=start_flag)
+            tmp_weight, server_info = udp_server(client_sock,start_flag=start_flag)
             # Finish the loop when timeout
-            if client_info == 'complete':
+            if server_info == 'complete':
                 break
             start_flag = False
-            # Add weights into the dictionary
-            client_weights[client_info['node']][client_info['weight']] = tmp_weight
+            # Check the info come from server
+            if server_info['node'] == 999:
+                tmp_id = server_info['weight']
+                weight_idx.append(tmp_id)
+                local_model.weights[tmp_id] = tmp_weight
             # Check whether complete transfer
-            if all(len(sub_dict) == weight_len for sub_dict in client_weights.values()):
+            if len(weight_idx) == weight_len:
                 break
         # Assign 0 to those lost weight
-        for tmp_client_id, tmp_client_weight in client_weights.items():
-            tmp_weight_id = tmp_client_weight.keys()
-            # Find the lost packet
-            lost_weight = set(range(weight_len)) - set(tmp_weight_id)
-            for tmp_idx in lost_weight:
-                tmp_shape = global_model.weights[tmp_idx].numpy().shape
-                tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
-                client_weights[tmp_client_id][tmp_idx] = tmp_weight
-        # Sort the dictionary and add to the list
-        # sort_weight_dict = {tmp_client_id:dict(sorted(tmp_client_weight.items())) for tmp_client_id, tmp_client_weight in client_weights.items()}
-        # Sort the dictionary and add to the list
-        weight_list = [list(dict(sorted(tmp_client_weight.items())).values()) for  tmp_client_weight in client_weights.values()]
+        lost_weight = set(range(weight_len)) - set(weight_idx)
+        for tmp_idx in lost_weight:
+            tmp_shape = local_model.weights[tmp_idx].numpy().shape
+            tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
+            local_model.weights[tmp_idx].assign(tmp_weight)
         
-        print(f"Aggregate weight for round {i}")
-        aggregate_weight = aggregate_weights(weight_list)
-
-        for weight_id in range(weight_len):
-            global_model.weights[weight_id].assign(aggregate_weight[weight_id])
-
-        # Send Updated Model Weights to Client
-        #---
-        # Put code here, serialize aggregate_weight and send via TCP/UDP
-        #---
-        for client_ip in CLIENT_IP:
-            for weight_id in range(weight_len):
-                server_info['weight'] = weight_id
-                # Send weight to client via UDP
-                udp_sender(global_model.weights[weight_id].numpy(),client_ip,CLIENT_PORT,server_info)
+    
+    client_sock.close()

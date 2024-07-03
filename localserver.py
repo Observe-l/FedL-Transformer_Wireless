@@ -29,6 +29,8 @@ CLIENT_PORT = 19999
 
 CLIENT_NUM = len(CLIENT_IP)
 
+LOCAL_PORT= [19000,19001,19002,19003]
+
 # Transformer Definition (Dependencies)
 
 # Multi-head attention with Q, K, V
@@ -260,7 +262,11 @@ if __name__ == "__main__":
             tmp_weight, client_info = udp_server(server_socket,start_flag=start_flag)
             # Finish the loop when timeout
             if client_info == 'complete':
-                break
+                if all(len(sub_dict) != 0  for sub_dict in client_weights.values()):
+                    break
+                else:
+                    start_flag = True
+                    continue
             start_flag = False
             # Add weights into the dictionary
             client_weights[client_info['node']][client_info['weight']] = tmp_weight
@@ -291,8 +297,8 @@ if __name__ == "__main__":
         #---
         # Put code here, serialize aggregate_weight and send via TCP/UDP
         #---
-        for client_ip in CLIENT_IP:
+        for client_port in LOCAL_PORT:
             for weight_id in range(weight_len):
                 server_info['weight'] = weight_id
                 # Send weight to client via UDP
-                udp_sender(global_model.weights[weight_id].numpy(),client_ip,CLIENT_PORT,server_info)
+                udp_sender(global_model.weights[weight_id].numpy(),"localhost",client_port,server_info)

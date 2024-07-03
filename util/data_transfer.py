@@ -37,14 +37,14 @@ def udp_server(sock, timeout = 0.5, start_flag=False):
     info={"node":info_node_id,"weight":info_weight_id}
 
     # Unpack the shape size
-    shape_size = struct.unpack('!I', packet[:4])[0]
+    shape_size = struct.unpack('!I', packet[8:12])[0]
     # Unpack the shape data
-    shape_data = packet[4:4 + shape_size]
+    shape_data = packet[12:12 + shape_size]
     shape = struct.unpack('!' + 'I' * (shape_size // 4), shape_data)
 
     # Unpack the array length
-    array_length = struct.unpack('!I', packet[4 + shape_size: 8 + shape_size])[0]
-    array_data = packet[8 + shape_size: 8 + shape_size + array_length]
+    array_length = struct.unpack('!I', packet[12 + shape_size: 16 + shape_size])[0]
+    array_data = packet[16 + shape_size: 16 + shape_size + array_length]
     # Unpack the array data
     array = np.frombuffer(array_data, dtype=np.float32).reshape(shape)
     return array, info

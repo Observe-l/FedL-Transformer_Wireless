@@ -12,6 +12,7 @@ import random
 import socket
 
 import os
+import optparse
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 from util.get_dataset import get_tr_test_data
@@ -22,11 +23,12 @@ CLIENT1_IP = '192.168.1.111'
 CLIENT2_IP = '192.168.1.199'
 CLIENT3_IP = '192.168.1.107'
 CLIENT4_IP = '192.168.1.192'
+CLIENT_IP = [CLIENT1_IP, CLIENT2_IP, CLIENT3_IP, CLIENT4_IP]
 
 SERVER_PORT = 19998
 CLIENT_PORT = 19999
 
-CLIENT_NUM = 4
+CLIENT_NUM = len(CLIENT_IP)
 
 # Transformer Definition (Dependencies)
 
@@ -178,6 +180,12 @@ def get_transformer_model(num_features, num_attn_heads, hidden_layer_dim, num_tr
 
   return model
 
+def get_options():
+    optParse = optparse.OptionParser()
+    optParse.add_option("-i","--id",default=0,type=int,help="Node ID")
+    options, args = optParse.parse_args()
+    return options
+
 # Can use following input arguments
 #num_attn_heads = 3
 #hidden_layer_dim = 32  # Hidden layer size in feed forward network inside transformer
@@ -192,9 +200,11 @@ def get_transformer_model(num_features, num_attn_heads, hidden_layer_dim, num_tr
 if __name__ == "__main__":
     #Client client
     #Datapaths (Put datapaths here)
-    tr_dp_1 = './dataset/train_FD001.txt'
-    te_dp_1 = './dataset/test_FD001.txt'
-    gt_dp_1 = './dataset/RUL_FD001.txt'
+    options = get_options()
+    node_id = options.id
+    tr_dp_1 = f'./dataset/node{node_id}/train_FD001.txt'
+    te_dp_1 = f'./dataset/node{node_id}/test_FD001.txt'
+    gt_dp_1 = f'./dataset/node{node_id}/RUL_FD001.txt'
 
     # FL parameters (Set These)
     B = 1024
@@ -229,7 +239,7 @@ if __name__ == "__main__":
                                         num_transformer_blocks=3, 
                                         time_dim=np.asarray(X_tr).astype(np.float32).shape[-2])
 
-    node_info = {"node":0}
+    node_info = {"node":node_id}
     ###Communication Rounds Loop
     input("Press Enter to continue...")
     for i in range(num_comm_rounds):
