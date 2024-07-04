@@ -183,9 +183,9 @@ def get_transformer_model(num_features, num_attn_heads, hidden_layer_dim, num_tr
 def get_options():
     optParse = optparse.OptionParser()
     optParse.add_option("-i","--id",default=0,type=int,help="Node ID")
-    optParse.add_option("-b","--batch",default=1024,type=int,help="Node ID")
-    optParse.add_option("-e","--epoch",default=10,type=int,help="Node ID")
-    optParse.add_option("-r","--round",default=10,type=int,help="Node ID")
+    optParse.add_option("-b","--batch",default=1024,type=int,help="batch size")
+    optParse.add_option("-e","--epoch",default=10,type=int,help="epoch")
+    optParse.add_option("-r","--round",default=10,type=int,help="communication round")
     options, args = optParse.parse_args()
     return options
 
@@ -286,6 +286,7 @@ if __name__ == "__main__":
         # Assign 0 to those lost weight
         lost_weight = set(range(weight_len)) - set(weight_idx)
         for tmp_idx in lost_weight:
+            print(f"Lost weight: weight id:{tmp_idx}, replace with zero array")
             tmp_shape = local_model.weights[tmp_idx].numpy().shape
             tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
             local_model.weights[tmp_idx].assign(tmp_weight)

@@ -200,9 +200,9 @@ def aggregate_weights(client_weights):
 def get_options():
     optParse = optparse.OptionParser()
     optParse.add_option("-i","--id",default=0,type=int,help="Node ID")
-    optParse.add_option("-b","--batch",default=1024,type=int,help="Node ID")
-    optParse.add_option("-e","--epoch",default=10,type=int,help="Node ID")
-    optParse.add_option("-r","--round",default=10,type=int,help="Node ID")
+    optParse.add_option("-b","--batch",default=1024,type=int,help="batch size")
+    optParse.add_option("-e","--epoch",default=10,type=int,help="epoch")
+    optParse.add_option("-r","--round",default=10,type=int,help="communication round")
     options, args = optParse.parse_args()
     return options
 
@@ -288,6 +288,7 @@ if __name__ == "__main__":
             # Find the lost packet
             lost_weight = set(range(weight_len)) - set(tmp_weight_id)
             for tmp_idx in lost_weight:
+                print(f"Lost weight: node{tmp_client_id}, weight id:{tmp_idx}, replace with zero array")
                 tmp_shape = global_model.weights[tmp_idx].numpy().shape
                 tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
                 client_weights[tmp_client_id][tmp_idx] = tmp_weight
