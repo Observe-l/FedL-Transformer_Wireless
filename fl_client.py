@@ -279,7 +279,8 @@ if __name__ == "__main__":
             if server_info['node'] == 999:
                 tmp_id = server_info['weight']
                 weight_idx.append(tmp_id)
-                local_model.weights[tmp_id] = tmp_weight
+                # Update local weight
+                local_model.weights[tmp_id].assign(tmp_weight)
             # Check whether complete transfer
             if len(weight_idx) == weight_len:
                 break
@@ -289,6 +290,7 @@ if __name__ == "__main__":
             print(f"Lost weight: weight id:{tmp_idx}, replace with zero array")
             tmp_shape = local_model.weights[tmp_idx].numpy().shape
             tmp_weight = np.zeros(tmp_shape, dtype=np.float32)
+            # Replace with 0
             local_model.weights[tmp_idx].assign(tmp_weight)
         
     
