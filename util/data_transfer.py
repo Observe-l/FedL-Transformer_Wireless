@@ -19,7 +19,7 @@ UDP frame:
 4. Array, [12+shape_size:16+array_length]
 
 '''
-def udp_server(sock, timeout = 0.5, start_flag=False):
+def udp_server(sock, timeout = 2, start_flag=False):
     if start_flag:
         packet, cli_addr = sock.recvfrom(buf)
     else:
