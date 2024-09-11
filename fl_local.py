@@ -246,9 +246,16 @@ if __name__ == "__main__":
     ###Communication Rounds Loop
     # input("Press Enter to continue...")
     print(f"Node {node_id} start training")
-    for tmp_round in range(num_comm_rounds):
-        # Train One Communication Round
-        local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
+    local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
+    weight_len = len(local_model.weights)
+    save_arrays = {}
+    for k in range(weight_len):
+        save_arrays[f'array{k}'] = local_model.weights[k].numpy()
+    np.savez("model.npz",**save_arrays)
+
+    # for tmp_round in range(num_comm_rounds):
+    #     # Train One Communication Round
+    #     local_model.fit(X_tr, Y_tr, batch_size=B, epochs=E)
         # weight_len = len(local_model.weights)
 
         # # Send Client Weights to server

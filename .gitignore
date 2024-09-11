@@ -1,3 +1,5 @@
 __pycache__/
 result/
-
+deletion error correction code/
+*.ipynb
+*.npz
