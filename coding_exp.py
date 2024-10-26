@@ -220,6 +220,10 @@ if __name__ == "__main__":
     local_model = []
     x_tr_list = []
     y_tr_list = []
+
+    x_test_list = []
+    y_test_list = []
+
     for tmp_id in node_id:
         tr_dp_1 = f'./dataset/node{tmp_id}/train_FD001.txt'
         te_dp_1 = f'./dataset/node{tmp_id}/test_FD001.txt'
@@ -229,6 +233,9 @@ if __name__ == "__main__":
         X_tr, Y_tr, X_test_1, Y_test_1, cov_adj_mat_1 = get_tr_test_data(tr_dp_1, te_dp_1, gt_dp_1)
         x_tr_list.append(X_tr)
         y_tr_list.append(Y_tr)
+
+        x_test_list.append(X_test_1)
+        y_test_list.append(Y_test_1)
         tmp_model = get_transformer_model(num_features = np.asarray(X_tr).astype(np.float32).shape[-1], 
                                             num_attn_heads=3, 
                                             hidden_layer_dim=32, 
@@ -253,7 +260,11 @@ if __name__ == "__main__":
         # Train One Communication Round
         weight_dict = {client_id:{} for client_id in range(len(local_model))}
         for i in range(len(local_model)):
-            history = local_model[i].fit(x_tr_list[i], y_tr_list[i], batch_size=B, epochs=E)
+            history = local_model[i].fit(x_tr_list[i], y_tr_list[i], 
+                                         batch_size=B, 
+                                         epochs=E,
+                                         validation_data=(x_test_list[i],y_tr_list[i])
+                                         )
             training_history[i].append(history)
             weight_len = len(local_model[i].weights)
             # get the weight and save them in a list

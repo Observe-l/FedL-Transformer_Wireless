@@ -2,6 +2,7 @@ __pycache__/
 deletion_error_correction_code/
 logs/
 result/
+figure_data/
 deletion error correction code/
 *.ipynb
 *.npz
