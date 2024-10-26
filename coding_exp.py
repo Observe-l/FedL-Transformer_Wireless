@@ -321,5 +321,5 @@ if __name__ == "__main__":
             for weight_id in range(len(tmp_weight_list)):
                 local_model[i].weights[weight_id].assign(tmp_weight_list[weight_id])
         
-        with open(f"result/fl_loss_{options.lose}_E_{options.epoch}_B_{options.batch}.pkl", "wb") as f:
-            pickle.dump(training_history, f)
+    with open(f"result/fl_loss_{options.lose}_E_{options.epoch}_B_{options.batch}.pkl", "wb") as f:
+        pickle.dump(training_history, f)
