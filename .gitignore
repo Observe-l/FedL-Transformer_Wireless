@@ -1,4 +1,6 @@
 __pycache__/
+deletion_error_correction_code/
+logs/
 result/
 deletion error correction code/
 *.ipynb
