@@ -263,7 +263,7 @@ if __name__ == "__main__":
             history = local_model[i].fit(x_tr_list[i], y_tr_list[i], 
                                          batch_size=B, 
                                          epochs=E,
-                                         validation_data=(x_test_list[i],y_tr_list[i])
+                                         validation_data=(x_test_list[i],y_test_list[i])
                                          )
             training_history[i].append(history)
             weight_len = len(local_model[i].weights)
