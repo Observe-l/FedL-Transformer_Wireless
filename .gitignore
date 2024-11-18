@@ -4,5 +4,4 @@ logs/
 result/
 figure_data/
 deletion error correction code/
-*.ipynb
 *.npz
