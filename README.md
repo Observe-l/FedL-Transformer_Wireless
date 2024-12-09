@@ -19,3 +19,8 @@ tc qdisc del dev wlan1 root
 * Total number of the codeWord $N=\sum M_i$. Each codeWord has 1024 bits.
 * Create UPD packets. Each UDP packet has $(2^n * N + 32)$ bits. $32$ is the length of the codeWord's series number. In my case, $N=1100$
 * When packet lose happened, each codeWord will lose $2^n$ bits
+
+### OmNet++
+```shell
+opp_run -r 0 -m -u Cmdenv -c FedTrans -n ..:../../showcases:../../src:../../tests/validation:../../tests/networks:../../tutorials -l ../../src/INET wireless.ini
+```
