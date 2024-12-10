@@ -2,7 +2,7 @@ __pycache__/
 deletion_error_correction_code/
 c-function/
 logs/
-result/
+results/
 figure_data/
 deletion error correction code/
 *.npz

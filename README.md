@@ -24,3 +24,16 @@ tc qdisc del dev wlan1 root
 ```shell
 opp_run -r 0 -m -u Cmdenv -c FedTrans -n ..:../../showcases:../../src:../../tests/validation:../../tests/networks:../../tutorials -l ../../src/INET wireless.ini
 ```
+
+# Run code
+```shell
+python3 main.py --num_nodes=50 \
+        --samples_per_round=0.1 \
+        --comm_round=1000 \
+        --epochs=5 \
+        --algo=fedavg \
+        --eval_freq=5 \
+        --test_round=0 \
+        --loss_rate=0.01 \
+        --loss_mode=zero
+```
