@@ -324,7 +324,11 @@ def main():
                 result_dict["test_loss"].append(test_avg_loss)
                 result_dict["test_all_acc"].append(test_all_acc)
                 # Save the results
-                file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}.json"
+                file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.coding:
+                    file_name += f"_coding.json"
+                else:
+                    file_name += f".json"
                 with open(str(save_path / file_name), "w") as f:
                     json.dump(result_dict, f, indent=4)
  

@@ -34,6 +34,17 @@ python3 main.py --num_nodes=50 \
         --algo=fedavg \
         --eval_freq=5 \
         --test_round=0 \
-        --loss_rate=0.01 \
+        --loss_rate=0.2 \
         --loss_mode=zero
+
+python3 main.py --num_nodes=50 \
+        --samples_per_round=0.1 \
+        --comm_round=1000 \
+        --epochs=5 \
+        --algo=fedavg \
+        --eval_freq=5 \
+        --test_round=0 \
+        --loss_rate=0.2 \
+        --loss_mode=zero \
+        --coding
 ```
