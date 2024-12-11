@@ -39,7 +39,7 @@ def get_args():
 
     # Communication Parameters
     parser.add_argument("--loss_rate", type=float, default=0.01)
-    parser.add_argument("--loss_mode", type=str, default="zero", help="zero or backup")
+    parser.add_argument("--loss_mode", type=str, default="zero", help="zero or drop")
     return parser.parse_args()
 
 def init_nets(num_nodes):
@@ -150,10 +150,9 @@ def coding_transfer(net, info_ni, freeze_ni, shuffle_ni, loss_rate, device):
 
     return restore_dict
 
-def basic_transfer(net, global_model, loss_rate, device, args):
+def basic_transfer(net, loss_rate, device, args):
     # Generate the udp packet from the UDP client
     weight_dict = {name: param.cpu().detach().numpy() for name, param in net.state_dict().items()}
-    global_para = {name: param.cpu().detach().numpy() for name, param in global_model.state_dict().items()}
 
     # Drop the packet with loss rate
     for name in weight_dict:
@@ -161,7 +160,7 @@ def basic_transfer(net, global_model, loss_rate, device, args):
             if args.loss_mode == "zero":
                 weight_dict[name] = np.zeros_like(weight_dict[name])
             else:
-                weight_dict[name] = global_para[name]
+                weight_dict[name] = np.nan
 
     restore_dict = {name: torch.tensor(weight_dict[name]).to(device) for name in weight_dict}
 
@@ -174,22 +173,26 @@ def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle
         restore_dict = {net_i: coding_transfer(nets[net_i], info_ni, freeze_ni, shuffle_ni, loss_rate, device) for net_i in selected}
         
     else:
-        restore_dict = {net_i: basic_transfer(nets[net_i], global_model, loss_rate, device, args) for net_i in selected}
+        restore_dict = {net_i: basic_transfer(nets[net_i], loss_rate, device, args) for net_i in selected}
 
     global_para = global_model.state_dict()
-    
-    # Aggregate the model
-    for idx, net_i in enumerate(selected):
-        if idx == 0:
-            for key in global_para:
-                global_para[key] = restore_dict[net_i][key] * net_freq[net_i]
-        else:
-            for key in global_model.state_dict():
-                global_para[key] += restore_dict[net_i][key] * net_freq[net_i]
+
+    for key in global_para:
+        recv_list = []
+        tmp_para = []
+        for net_i in selected:
+            if torch.isnan(restore_dict[net_i][key]).any():
+                continue
+            recv_list.append(net_freq[net_i])
+            tmp_para.append(restore_dict[net_i][key])
+        if len(recv_list) == 0:
+            continue
+        for freq, para in zip(recv_list, tmp_para):
+            global_para[key] += para * freq / sum(recv_list)
     
     global_model.load_state_dict(global_para)
         
-def broadcast_parameters(nets, global_model, selected, loss_rate, info_ni, freeze_ni, shuffle_ni, args):
+def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_ni, args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if args.coding:
         for net_i in selected:
@@ -197,7 +200,12 @@ def broadcast_parameters(nets, global_model, selected, loss_rate, info_ni, freez
             nets[net_i].load_state_dict(restore_dict)
     else:
         for net_i in selected:
-            restore_dict = basic_transfer(nets[net_i], global_model, loss_rate, device, args)
+            restore_dict = basic_transfer(nets[net_i], loss_rate, device, args)
+            weight_dict = nets[net_i].state_dict()
+            for key in restore_dict:
+                if torch.isnan(restore_dict[key]).any():
+                    restore_dict[key] = weight_dict[key]
+                    
             nets[net_i].load_state_dict(restore_dict)
 
 def compute_accuracy_loss(nets, fds):
@@ -305,7 +313,8 @@ def main():
             arr = np.arange(num_nodes)
             np.random.shuffle(arr)
             selected = arr[:int(num_nodes * samples_per_round)]
-            broadcast_parameters(nets, global_model, selected, loss_rate, info_ni, freeze_ni, c_1024, args)
+            if((i % eval_freq != 0) or i != 0):
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, c_1024, args)
 
             # Train the local model
             net_freq = local_train_net_per(nets, selected, fds, epochs, logger=logger)
@@ -315,7 +324,7 @@ def main():
 
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
-                broadcast_parameters(nets, global_model, arr, loss_rate, info_ni, freeze_ni, c_1024, args)
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, c_1024, args)
                 test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")

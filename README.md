@@ -29,22 +29,21 @@ opp_run -r 0 -m -u Cmdenv -c FedTrans -n ..:../../showcases:../../src:../../test
 ```shell
 python3 main.py --num_nodes=50 \
         --samples_per_round=0.1 \
-        --comm_round=1000 \
+        --comm_round=300 \
         --epochs=5 \
         --algo=fedavg \
         --eval_freq=5 \
         --test_round=0 \
         --loss_rate=0.2 \
-        --loss_mode=zero
+        --loss_mode=drop
 
 python3 main.py --num_nodes=50 \
         --samples_per_round=0.1 \
-        --comm_round=1000 \
+        --comm_round=300 \
         --epochs=5 \
         --algo=fedavg \
-        --eval_freq=5 \
+        --eval_freq=1 \
         --test_round=0 \
-        --loss_rate=0.2 \
-        --loss_mode=zero \
+        --loss_rate=0.25 \
         --coding
 ```
