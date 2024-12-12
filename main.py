@@ -32,6 +32,9 @@ def get_args():
     parser.add_argument("--eval_freq", type=int, default=5)
     parser.add_argument("--test_round", type=int, default=0)
 
+    # Model Parameters
+    parser.add_argument("--mu", type=float, default=0.1, help="The mu parameter for the FedProx algorithm")
+
     # Coding Parameters
     parser.add_argument("--coding", action="store_true")
     parser.add_argument("--codeword_len", type=int, default=1024)
@@ -97,10 +100,15 @@ def get_divided_dataloader(fds:FederatedDataset, num_nodes):
     
     return train_loader, test_loader
 
-def train_net(net, train_loader, test_loader, epochs=5):
+def train_net(net, train_loader, test_loader, epochs, args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-5)
+    if args.algo == "fedprox":
+        mu = args.mu
+        # Before training, the weights of local model are initialized to the global model
+        global_weights_collector = list(net.to(device).parameters())
+
     net.train()
     for epoch in range(epochs):
         running_loss, total_samples = 0.0, 0
@@ -109,6 +117,12 @@ def train_net(net, train_loader, test_loader, epochs=5):
             optimizer.zero_grad()
             outputs = net(inputs)
             loss = criterion(outputs, labels)
+            if args.algo == "fedprox":
+                fed_prox_reg = 0.0
+                for param_index, param in enumerate(net.parameters()):
+                    fed_prox_reg += (mu/2) * torch.norm((param - global_weights_collector[param_index]))**2
+                loss += fed_prox_reg
+
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -128,12 +142,12 @@ def train_net(net, train_loader, test_loader, epochs=5):
     train_loss = running_loss / total_samples
     return test_acc, train_loss
 
-def local_train_net_per(nets, selected, fds, epochs=5, logger=None):
+def local_train_net_per(nets, selected, fds, epochs, logger, args):
     train_loader, test_loader = get_divided_dataloader(fds, len(nets))
     total_num = sum([len(train_loader[net_i]) for net_i in selected])
     net_freq = {net_i: None for net_i in selected}
     for net_i in selected:
-        test_acc, train_loss = train_net(nets[net_i], train_loader[net_i], test_loader[net_i], epochs)
+        test_acc, train_loss = train_net(nets[net_i], train_loader[net_i], test_loader[net_i], epochs, args)
         net_freq[net_i] = len(train_loader[net_i].dataset) / total_num
         logger.info(f"Node {net_i} test accuracy: {test_acc}, train loss: {train_loss}")
     return net_freq
@@ -163,7 +177,6 @@ def basic_transfer(net, loss_rate, device, args):
                 weight_dict[name] = np.nan
 
     restore_dict = {name: torch.tensor(weight_dict[name]).to(device) for name in weight_dict}
-
     return restore_dict
 
 
@@ -189,9 +202,8 @@ def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle
             continue
         for freq, para in zip(recv_list, tmp_para):
             global_para[key] += para * freq / sum(recv_list)
-    
     global_model.load_state_dict(global_para)
-        
+
 def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_ni, args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if args.coding:
@@ -313,11 +325,52 @@ def main():
             arr = np.arange(num_nodes)
             np.random.shuffle(arr)
             selected = arr[:int(num_nodes * samples_per_round)]
-            if((i % eval_freq != 0) or i != 0):
+            if((i % eval_freq != 0) and i != 0):
                 broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, c_1024, args)
 
             # Train the local model
-            net_freq = local_train_net_per(nets, selected, fds, epochs, logger=logger)
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+
+            # Transfer and aggregate the model
+            fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, c_1024, net_freq, args)
+
+            # Evaluate the model
+            if (i+1) >= test_round and (i+1) % eval_freq == 0:
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, c_1024, args)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
+                logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
+
+                result_dict["test_acc"].append(test_avg_acc)
+                result_dict["test_loss"].append(test_avg_loss)
+                result_dict["test_all_acc"].append(test_all_acc)
+                # Save the results
+                file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.coding:
+                    file_name += f"_coding.json"
+                else:
+                    file_name += f".json"
+                with open(str(save_path / file_name), "w") as f:
+                    json.dump(result_dict, f, indent=4)
+
+    elif args.algo == "fedprox":
+        logger.info("Using FedProx Algorithm")
+        nets = init_nets(num_nodes)
+        global_model = init_nets(1)[0]
+        for net_i in nets:
+            nets[net_i].load_state_dict(global_model.state_dict())
+
+        for i in range(comm_round):
+            logger.info(f">>>>>> Round {i} <<<<<<")
+            # Generate selected data
+            arr = np.arange(num_nodes)
+            np.random.shuffle(arr)
+            selected = arr[:int(num_nodes * samples_per_round)]
+            if((i % eval_freq != 0) and i != 0):
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, c_1024, args)
+
+            # Train the local model
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
 
             # Transfer and aggregate the model
             fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, c_1024, net_freq, args)
