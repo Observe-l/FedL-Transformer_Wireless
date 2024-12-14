@@ -237,7 +237,7 @@ def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle_
             else:
                 global_per[key] += para * freq / sum(recv_list)
             idx += 1
-    global_model.load_state_dict(global_per)
+    global_model.load_state_dict(global_per, strict=False)
 
 def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_ni, args, per_list=None):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -251,7 +251,7 @@ def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_
             net_dict = nets[net_i].state_dict()
             tranfer_dict = {name: net_dict[name].cpu().detach().numpy() for name in dict_name}
             restore_dict = coding_transfer(tranfer_dict, info_ni, freeze_ni, shuffle_ni, loss_rate, device)
-            nets[net_i].load_state_dict(restore_dict)
+            nets[net_i].load_state_dict(restore_dict, strict=False)
     else:
         for net_i in selected:
             net_dict = nets[net_i].state_dict()
@@ -262,7 +262,7 @@ def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_
                 if torch.isnan(restore_dict[key]).any():
                     restore_dict[key] = weight_dict[key]
                     
-            nets[net_i].load_state_dict(restore_dict)
+            nets[net_i].load_state_dict(restore_dict, strict=False)
 
 def compute_accuracy_loss(nets, fds):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
