@@ -34,7 +34,7 @@ python3 main.py --algo=fedprox \
         --epochs=5 \
         --eval_freq=5 \
         --test_round=0 \
-        --loss_rate=0.05 \
+        --loss_rate=0.25 \
         --loss_mode=zero
 
 python3 main.py --algo=fedprox \
@@ -44,6 +44,6 @@ python3 main.py --algo=fedprox \
         --epochs=5 \
         --eval_freq=5 \
         --test_round=0 \
-        --loss_rate=0.25 \
+        --loss_rate=0.1 \
         --coding
 ```

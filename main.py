@@ -18,6 +18,7 @@ from collections import defaultdict
 from util.data_process import codeword_generate, packet_diffusion, encoder_udp, packet_aggregation
 from flwr_datasets import FederatedDataset
 from flwr_datasets.partitioner import DirichletPartitioner
+from models.vit_small import ViT
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -46,7 +47,6 @@ def get_args():
     return parser.parse_args()
 
 def init_nets(num_nodes):
-    from models.vit_small import ViT
     nets = {net_i: None for net_i in range(num_nodes)}
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     for net_i in range(num_nodes):
@@ -152,41 +152,39 @@ def local_train_net_per(nets, selected, fds, epochs, logger, args):
         logger.info(f"Node {net_i} test accuracy: {test_acc}, train loss: {train_loss}")
     return net_freq
 
-def coding_transfer(net, info_ni, freeze_ni, shuffle_ni, loss_rate, device):
+def coding_transfer(net_dict, info_ni, freeze_ni, shuffle_ni, loss_rate, device):
     # Generate the udp packet from the UDP client
-    weight_dict = {name: param.cpu().detach().numpy() for name, param in net.state_dict().items()}
-    udp_packet, codeword_idx, bit_array_len = encoder_udp(weight_dict, info_ni, 8, shuffle_ni)
+    udp_packet, codeword_idx, bit_array_len = encoder_udp(net_dict, info_ni, 8, shuffle_ni)
 
     # Recover the udp packet at the UDP server
     received_packet = [packet for packet in udp_packet if np.random.rand() > loss_rate]
     restore_array = packet_aggregation(received_packet, shuffle_ni, 8, info_ni, freeze_ni, codeword_idx, bit_array_len)
-    restore_dict = {name: torch.tensor(restore_array[i].reshape(weight_dict[name].shape)).to(device) for i, name in enumerate(weight_dict)}
+    restore_dict = {name: torch.tensor(restore_array[i].reshape(net_dict[name].shape)).to(device) for i, name in enumerate(net_dict)}
 
     return restore_dict
 
-def basic_transfer(net, loss_rate, device, args):
-    # Generate the udp packet from the UDP client
-    weight_dict = {name: param.cpu().detach().numpy() for name, param in net.state_dict().items()}
-
+def basic_transfer(net_dict, loss_rate, device, args):
     # Drop the packet with loss rate
-    for name in weight_dict:
+    for name in net_dict:
         if np.random.rand() < loss_rate:
             if args.loss_mode == "zero":
-                weight_dict[name] = np.zeros_like(weight_dict[name])
+                net_dict[name] = np.zeros_like(net_dict[name])
             else:
-                weight_dict[name] = np.nan
-
-    restore_dict = {name: torch.tensor(weight_dict[name]).to(device) for name in weight_dict}
+                net_dict[name] = np.nan
+    restore_dict = {name: torch.tensor(net_dict[name]).to(device) for name in net_dict}
     return restore_dict
 
 
 def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle_ni, net_freq, args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    transfer_dict = {net_i: nets[net_i].state_dict() for net_i in selected}
+    for net_i in selected:
+        transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in transfer_dict[net_i]}
+
     if args.coding:
-        restore_dict = {net_i: coding_transfer(nets[net_i], info_ni, freeze_ni, shuffle_ni, loss_rate, device) for net_i in selected}
-        
+        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, shuffle_ni, loss_rate, device) for net_i in selected}
     else:
-        restore_dict = {net_i: basic_transfer(nets[net_i], loss_rate, device, args) for net_i in selected}
+        restore_dict = {net_i: basic_transfer(transfer_dict[net_i], loss_rate, device, args) for net_i in selected}
 
     global_para = global_model.state_dict()
 
@@ -200,19 +198,65 @@ def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle
             tmp_para.append(restore_dict[net_i][key])
         if len(recv_list) == 0:
             continue
+        idx = 0
         for freq, para in zip(recv_list, tmp_para):
-            global_para[key] += para * freq / sum(recv_list)
+            if idx == 0:
+                global_para[key] = para * freq / sum(recv_list)
+            else:
+                global_para[key] += para * freq / sum(recv_list)
+            idx += 1
     global_model.load_state_dict(global_para)
 
-def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_ni, args):
+def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle_ni, net_freq, per_list, args):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    transfer_dict = {net_i: nets[net_i].state_dict() for net_i in selected}
+    for net_i in selected:
+        transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in transfer_dict[net_i]}
+    
+    if args.coding:
+        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, shuffle_ni, loss_rate, device) for net_i in selected}
+    else:
+        restore_dict = {net_i: basic_transfer(transfer_dict[net_i], loss_rate, device, args) for net_i in selected}
+    
+    global_para = global_model.state_dict()
+    global_per = {name: global_para[name] for name in per_list}
+    for key in global_per:
+        recv_list = []
+        tmp_para = []
+        for net_i in selected:
+            if torch.isnan(restore_dict[net_i][key]).any():
+                continue
+            recv_list.append(net_freq[net_i])
+            tmp_para.append(restore_dict[net_i][key])
+        if len(recv_list) == 0:
+            continue
+        idx = 0
+        for freq, para in zip(recv_list, tmp_para):
+            if idx == 0:
+                global_per[key] = para * freq / sum(recv_list)
+            else:
+                global_per[key] += para * freq / sum(recv_list)
+            idx += 1
+    global_model.load_state_dict(global_per)
+
+def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, shuffle_ni, args, per_list=None):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if per_list is not None:
+        dict_name = per_list
+    else:
+        dict_name = nets[selected[0]].state_dict().keys()
+        
     if args.coding:
         for net_i in selected:
-            restore_dict = coding_transfer(nets[net_i], info_ni, freeze_ni, shuffle_ni, loss_rate, device)
+            net_dict = nets[net_i].state_dict()
+            tranfer_dict = {name: net_dict[name].cpu().detach().numpy() for name in dict_name}
+            restore_dict = coding_transfer(tranfer_dict, info_ni, freeze_ni, shuffle_ni, loss_rate, device)
             nets[net_i].load_state_dict(restore_dict)
     else:
         for net_i in selected:
-            restore_dict = basic_transfer(nets[net_i], loss_rate, device, args)
+            net_dict = nets[net_i].state_dict()
+            tranfer_dict = {name: net_dict[name].cpu().detach().numpy() for name in dict_name}
+            restore_dict = basic_transfer(tranfer_dict, loss_rate, device, args)
             weight_dict = nets[net_i].state_dict()
             for key in restore_dict:
                 if torch.isnan(restore_dict[key]).any():
@@ -378,6 +422,45 @@ def main():
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
                 broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, c_1024, args)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
+                logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
+
+                result_dict["test_acc"].append(test_avg_acc)
+                result_dict["test_loss"].append(test_avg_loss)
+                result_dict["test_all_acc"].append(test_all_acc)
+                # Save the results
+                file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.coding:
+                    file_name += f"_coding.json"
+                else:
+                    file_name += f".json"
+                with open(str(save_path / file_name), "w") as f:
+                    json.dump(result_dict, f, indent=4)
+
+    elif args.algo == "fedper":
+        logger.info("Using FedPer Algorithm")
+        nets = init_nets(num_nodes)
+        global_model = init_nets(1)[0]
+        personalized_pred_list = ["mlp_head.0.weight", "mlp_head.0.bias", "mlp_head.1.weight", "mlp_head.1.bias"]
+        for i in range(comm_round):
+            logger.info(f">>>>>> Round {i} <<<<<<")
+            # Generate selected data
+            arr = np.arange(num_nodes)
+            np.random.shuffle(arr)
+            selected = arr[:int(num_nodes * samples_per_round)]
+            if((i % eval_freq != 0) and i != 0):
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, c_1024, args, personalized_pred_list)
+
+            # Train the local model
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+
+            # Transfer and aggregate the model
+            fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, c_1024, net_freq, personalized_pred_list, args)
+
+            # Evaluate the model
+            if (i+1) >= test_round and (i+1) % eval_freq == 0:
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, c_1024, args, personalized_pred_list)
                 test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
