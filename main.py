@@ -211,7 +211,7 @@ def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, shuffle_
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     transfer_dict = {net_i: nets[net_i].state_dict() for net_i in selected}
     for net_i in selected:
-        transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in transfer_dict[net_i]}
+        transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in per_list}
     
     if args.coding:
         restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, shuffle_ni, loss_rate, device) for net_i in selected}
