@@ -27,7 +27,7 @@ opp_run -r 0 -m -u Cmdenv -c FedTrans -n ..:../../showcases:../../src:../../test
 
 # Run code
 ```shell
-python3 main.py --algo=fedper \
+python3 main.py --algo=fedavg \
         --num_nodes=50 \
         --samples_per_round=0.1 \
         --comm_round=300 \
@@ -37,7 +37,7 @@ python3 main.py --algo=fedper \
         --loss_rate=0.25 \
         --loss_mode=zero
 
-python3 main.py --algo=fedper \
+python3 main.py --algo=fedprox \
         --num_nodes=50 \
         --samples_per_round=0.1 \
         --comm_round=300 \

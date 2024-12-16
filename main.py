@@ -390,6 +390,8 @@ def main():
                 result_dict["test_all_acc"].append(test_all_acc)
                 # Save the results
                 file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.eval_freq == 1:
+                    file_name += f"_eval"
                 if args.coding:
                     file_name += f"_coding.json"
                 else:
@@ -431,6 +433,8 @@ def main():
                 result_dict["test_all_acc"].append(test_all_acc)
                 # Save the results
                 file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.eval_freq == 1:
+                    file_name += f"_eval"
                 if args.coding:
                     file_name += f"_coding.json"
                 else:
@@ -470,6 +474,8 @@ def main():
                 result_dict["test_all_acc"].append(test_all_acc)
                 # Save the results
                 file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.eval_freq == 1:
+                    file_name += f"_eval"
                 if args.coding:
                     file_name += f"_coding.json"
                 else:
