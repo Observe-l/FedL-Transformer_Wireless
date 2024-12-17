@@ -214,7 +214,7 @@ def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq
         transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in per_list}
     
     if args.coding:
-        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, loss_rate, gn, device) for net_i in selected}
+        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, loss_rate, device, gn) for net_i in selected}
     else:
         restore_dict = {net_i: basic_transfer(transfer_dict[net_i], loss_rate, device, args) for net_i in selected}
     
@@ -464,7 +464,7 @@ def main():
 
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
-                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, args, gn, personalized_pred_list)
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, args, personalized_pred_list)
                 test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
@@ -482,6 +482,54 @@ def main():
                     file_name += f".json"
                 with open(str(save_path / file_name), "w") as f:
                     json.dump(result_dict, f, indent=4)
+        
+    elif args.algo == "fedbn":
+        logger.info("Using FedBN Algorithm")
+        nets = init_nets(num_nodes)
+        global_model = init_nets(1)[0]
+        fedbn_list = []
+        global_para_keys = list(global_model.state_dict().keys())
+        for key in global_para_keys:
+            if "norm" in key:
+                fedbn_list.append(key)
+
+        for i in range(comm_round):
+            logger.info(f">>>>>> Round {i} <<<<<<")
+            # Generate selected data
+            arr = np.arange(num_nodes)
+            np.random.shuffle(arr)
+            selected = arr[:int(num_nodes * samples_per_round)]
+            if((i % eval_freq != 0) and i != 0):
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args, fedbn_list)
+
+            # Train the local model
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+
+            # Transfer and aggregate the model
+            fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, fedbn_list, gn, args)
+
+            # Evaluate the model
+            if (i+1) >= test_round and (i+1) % eval_freq == 0:
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, args, fedbn_list)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
+                logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
+
+                result_dict["test_acc"].append(test_avg_acc)
+                result_dict["test_loss"].append(test_avg_loss)
+                result_dict["test_all_acc"].append(test_all_acc)
+                # Save the results
+                file_name = f"n{num_nodes}_s{samples_per_round}_r{comm_round}_e{epochs}_loss{loss_rate}_mode{args.loss_mode}"
+                if args.eval_freq == 1:
+                    file_name += f"_eval"
+                if args.coding:
+                    file_name += f"_coding.json"
+                else:
+                    file_name += f".json"
+                with open(str(save_path / file_name), "w") as f:
+                    json.dump(result_dict, f, indent=4)
+        
+
  
 if __name__ == '__main__':
     main()

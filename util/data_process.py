@@ -5,7 +5,7 @@ from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from cython_decoder import cython_sc_decoding
 
-def get_gn(length:int, device) -> np.ndarray:
+def get_gn(length:int, device):
     n = int(np.log2(length))
     f=np.array([[1,0],[1,1]], dtype=bool)
     g_n = f
