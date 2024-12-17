@@ -490,8 +490,9 @@ def main():
         fedbn_list = []
         global_para_keys = list(global_model.state_dict().keys())
         for key in global_para_keys:
-            if "norm" in key:
+            if "norm" not in key:
                 fedbn_list.append(key)
+        print(fedbn_list)
 
         for i in range(comm_round):
             logger.info(f">>>>>> Round {i} <<<<<<")
