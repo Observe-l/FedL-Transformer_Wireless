@@ -492,7 +492,6 @@ def main():
         for key in global_para_keys:
             if "norm" not in key:
                 fedbn_list.append(key)
-        print(fedbn_list)
 
         for i in range(comm_round):
             logger.info(f">>>>>> Round {i} <<<<<<")
