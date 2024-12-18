@@ -34,16 +34,16 @@ python3 main.py --algo=fedbn \
         --epochs=5 \
         --eval_freq=1 \
         --test_round=0 \
-        --loss_rate=0 \
+        --loss_rate=0.25 \
         --loss_mode=zero
 
-python3 main.py --algo=fedbn \
+python3 main.py --algo=fedavg \
         --num_nodes=50 \
         --samples_per_round=0.1 \
         --comm_round=300 \
         --epochs=5 \
         --eval_freq=5 \
         --test_round=0 \
-        --loss_rate=0.05 \
+        --loss_rate=0.2 \
         --coding
 ```
