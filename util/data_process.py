@@ -25,12 +25,13 @@ def rvsl(y: np.ndarray) -> np.ndarray:
 
 def data_process(array, data_idx):
     bit_array = np.frombuffer(array.tobytes(), dtype=np.uint8)
+    info_len = int(len(data_idx) / 8)
     array_len = bit_array.shape[0] * 8
-    if bit_array.shape[0] % 64 != 0:
-        padding = 255 * np.ones((64 - bit_array.shape[0] % 64), dtype=bit_array.dtype)
+    if bit_array.shape[0] % info_len != 0:
+        padding = 255 * np.ones((info_len - bit_array.shape[0] % info_len), dtype=bit_array.dtype)
         bit_array = np.concatenate((bit_array, padding))
     bit_array = np.unpackbits(bit_array)
-    bit_array = bit_array.reshape(-1, 512)
+    bit_array = bit_array.reshape(-1, len(data_idx))
     current_array = np.zeros((bit_array.shape[0], 1024), dtype=np.uint8)
     current_array[:, data_idx] = bit_array
     current_idx = bit_array.shape[0]
@@ -108,7 +109,7 @@ def decoding(bit_array, freeze_idx, data_idx):
     # Call the optimized Cython function
     i_scen_sum, hd_dec_result = cython_sc_decoding(
         lr0_post, lr1_post, freeze_idx.astype(np.float64),
-        hd_dec, 1024, 10, 512, frozen_val, delete_num, 0, pro_prun
+        hd_dec, 1024, 10, len(freeze_idx), frozen_val, delete_num, 0, pro_prun
     )
 
     # Extract the output for data_idx from hd_dec_result
