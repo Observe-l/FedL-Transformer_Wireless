@@ -323,7 +323,7 @@ def decoding_cuda(udp_packet, codeword_num, data_idx, freeze_idx, codeword_idx, 
 weights_dict = {name: param.cpu().detach().numpy() for name, param in net[0].state_dict().items()}
 N = 1024
 n = 10
-rate = 1/2
+rate = 1/16
 K = round(N*rate)
 c_1024 = np.load('c_1024.npy')
 coding_list = scipy.io.loadmat("1024-3db-d=2-mean.mat")["count_number"]

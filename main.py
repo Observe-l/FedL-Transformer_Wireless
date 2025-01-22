@@ -15,7 +15,7 @@ import scipy.io
 from pathlib import Path
 from collections import defaultdict
 
-from util.data_process import encoder_udp, packet_aggregation, get_gn
+from util.data_process import encoder_udp, decoding, get_gn
 from flwr_datasets import FederatedDataset
 from flwr_datasets.partitioner import DirichletPartitioner
 from models.vit_small import ViT
@@ -32,6 +32,9 @@ def get_args():
     parser.add_argument("--algo", type=str, default="fedavg")
     parser.add_argument("--eval_freq", type=int, default=5)
     parser.add_argument("--test_round", type=int, default=0)
+    parser.add_argument("--dataset", type=str, default="cifar10")
+    parser.add_argument("--gpu", type=str, default="cuda:0")
+    parser.add_argument("--alpha", type=float, default=0.1)
 
     # Model Parameters
     parser.add_argument("--mu", type=float, default=0.1, help="The mu parameter for the FedProx algorithm")
@@ -46,38 +49,52 @@ def get_args():
     parser.add_argument("--loss_mode", type=str, default="zero", help="zero or drop")
     return parser.parse_args()
 
-def init_nets(num_nodes):
+def init_nets(num_nodes, classes, device):
     nets = {net_i: None for net_i in range(num_nodes)}
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     for net_i in range(num_nodes):
         net = ViT(
             image_size=32,
             patch_size=4,
-            num_classes=10,
+            num_classes=classes,
             dim=32,
             depth=6,
             heads=8,
-            mlp_dim=32,
+            mlp_dim=32, 
             dropout=0.1,
             emb_dropout=0.1
         )
         nets[net_i] = net.to(device)
     return nets
 
-def get_divided_dataloader(fds:FederatedDataset, num_nodes):
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.Resize(32),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+def get_divided_dataloader(fds:FederatedDataset, num_nodes, args):
+    if args.dataset == "cifar10":
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.Resize(32),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
 
-    transform_test = transforms.Compose([
-        transforms.Resize(32),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+        transform_test = transforms.Compose([
+            transforms.Resize(32),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+    else:
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.Resize(32),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+
+        transform_test = transforms.Compose([
+            transforms.Resize(32),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
 
     def train_transforms(batch):
         transforms = transform_train
@@ -100,20 +117,23 @@ def get_divided_dataloader(fds:FederatedDataset, num_nodes):
     
     return train_loader, test_loader
 
-def train_net(net, train_loader, test_loader, epochs, args):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def train_net(net, train_loader, test_loader, epochs, device, args):
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-5)
     if args.algo == "fedprox":
         mu = args.mu
         # Before training, the weights of local model are initialized to the global model
         global_weights_collector = list(net.to(device).parameters())
-
+    if args.dataset == "cifar10":
+        data_label = "label"
+    else:
+        data_label = "fine_label"
+    '''Train the model'''
     net.train()
     for epoch in range(epochs):
         running_loss, total_samples = 0.0, 0
         for i, data in enumerate(train_loader, 0):
-            inputs, labels = data["img"].to(device), data["label"].to(device)
+            inputs, labels = data["img"].to(device), data[data_label].to(device)
             optimizer.zero_grad()
             outputs = net(inputs)
             loss = criterion(outputs, labels)
@@ -133,7 +153,7 @@ def train_net(net, train_loader, test_loader, epochs, args):
     correct, total = 0, 0
     with torch.no_grad():
         for data in test_loader:
-            inputs, labels = data["img"].to(device), data["label"].to(device)
+            inputs, labels = data["img"].to(device), data[data_label].to(device)
             outputs = net(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
@@ -142,23 +162,23 @@ def train_net(net, train_loader, test_loader, epochs, args):
     train_loss = running_loss / total_samples
     return test_acc, train_loss
 
-def local_train_net_per(nets, selected, fds, epochs, logger, args):
-    train_loader, test_loader = get_divided_dataloader(fds, len(nets))
+def local_train_net_per(nets, selected, fds, epochs, logger, device, args):
+    train_loader, test_loader = get_divided_dataloader(fds, len(nets), args)
     total_num = sum([len(train_loader[net_i]) for net_i in selected])
     net_freq = {net_i: None for net_i in selected}
     for net_i in selected:
-        test_acc, train_loss = train_net(nets[net_i], train_loader[net_i], test_loader[net_i], epochs, args)
+        test_acc, train_loss = train_net(nets[net_i], train_loader[net_i], test_loader[net_i], epochs, device, args)
         net_freq[net_i] = len(train_loader[net_i].dataset) / total_num
         logger.info(f"Node {net_i} test accuracy: {test_acc}, train loss: {train_loss}")
     return net_freq
 
-def coding_transfer(net_dict, info_ni, freeze_ni, loss_rate, device, gn):
+def coding_transfer(net_dict, info_ni, freeze_ni, loss_rate, gn, device):
     # Generate the udp packet from the UDP client
     udp_packet, codeword_idx, bit_array_len, codeword_num = encoder_udp(net_dict, info_ni, gn)
 
     # Recover the udp packet at the UDP server
     received_packet = [packet for packet in udp_packet if np.random.rand() > loss_rate]
-    restore_array = packet_aggregation(received_packet, codeword_num, info_ni, freeze_ni, codeword_idx, bit_array_len)
+    restore_array = decoding(received_packet, codeword_num, info_ni, freeze_ni, codeword_idx, bit_array_len)
     restore_dict = {name: torch.tensor(restore_array[i].reshape(net_dict[name].shape)).to(device) for i, name in enumerate(net_dict)}
 
     return restore_dict
@@ -175,14 +195,13 @@ def basic_transfer(net_dict, loss_rate, device, args):
     return restore_dict
 
 
-def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, gn, args):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, gn, device, args):
     transfer_dict = {net_i: nets[net_i].state_dict() for net_i in selected}
     for net_i in selected:
         transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in transfer_dict[net_i]}
 
     if args.coding:
-        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, loss_rate, device, gn) for net_i in selected}
+        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, loss_rate, gn, device) for net_i in selected}
     else:
         restore_dict = {net_i: basic_transfer(transfer_dict[net_i], loss_rate, device, args) for net_i in selected}
 
@@ -207,14 +226,13 @@ def fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_fre
             idx += 1
     global_model.load_state_dict(global_para)
 
-def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, per_list, gn, args):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, per_list, gn, device, args):
     transfer_dict = {net_i: nets[net_i].state_dict() for net_i in selected}
     for net_i in selected:
         transfer_dict[net_i] = {name:transfer_dict[net_i][name].cpu().detach().numpy() for name in per_list}
     
     if args.coding:
-        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, loss_rate, device, gn) for net_i in selected}
+        restore_dict = {net_i: coding_transfer(transfer_dict[net_i], info_ni, freeze_ni, loss_rate, gn, device) for net_i in selected}
     else:
         restore_dict = {net_i: basic_transfer(transfer_dict[net_i], loss_rate, device, args) for net_i in selected}
     
@@ -239,8 +257,7 @@ def fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq
             idx += 1
     global_model.load_state_dict(global_per, strict=False)
 
-def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args, per_list=None):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, device, args, per_list=None):
     if per_list is not None:
         dict_name = per_list
     else:
@@ -250,7 +267,7 @@ def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args
         for net_i in selected:
             net_dict = nets[net_i].state_dict()
             tranfer_dict = {name: net_dict[name].cpu().detach().numpy() for name in dict_name}
-            restore_dict = coding_transfer(tranfer_dict, info_ni, freeze_ni, loss_rate, device, gn)
+            restore_dict = coding_transfer(tranfer_dict, info_ni, freeze_ni, loss_rate, gn, device)
             nets[net_i].load_state_dict(restore_dict, strict=False)
     else:
         for net_i in selected:
@@ -264,17 +281,22 @@ def broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args
                     
             nets[net_i].load_state_dict(restore_dict, strict=False)
 
-def compute_accuracy_loss(nets, fds):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    train_loader, test_loader = get_divided_dataloader(fds, len(nets))
+def compute_accuracy_loss(nets, fds, device, args):
+    train_loader, test_loader = get_divided_dataloader(fds, len(nets), args)
     test_results = defaultdict(lambda: defaultdict(list))
+
+    if args.dataset == "cifar10":
+        data_label = "label"
+    else:
+        data_label = "fine_label"
+
     for net_i in nets:
         criterion = nn.CrossEntropyLoss().to(device)
         correct, total, total_loss= 0, 0, 0
         nets[net_i].eval()
         with torch.no_grad():
             for data in test_loader[net_i]:
-                inputs, labels = data["img"].to(device), data["label"].to(device)
+                inputs, labels = data["img"].to(device), data[data_label].to(device)
                 outputs = nets[net_i](inputs)
                 loss = criterion(outputs, labels)
                 total_loss += loss.item()
@@ -308,13 +330,16 @@ def main():
     loss_rate = args.loss_rate
     codeword_len = args.codeword_len
     rate = args.rate
+    device = args.gpu
+    dataset = args.dataset
+    alpha = args.alpha
 
     k = round(codeword_len * rate)
     coding_list = scipy.io.loadmat("1024-3db-d=2-mean.mat")["count_number"]
     coding_index = np.argsort(coding_list[:,1])
     info_idx = coding_index[:k]
     freeze_idx = coding_index[k:]
-    gn = get_gn(codeword_len, "cuda:0")
+    gn = get_gn(codeword_len, device)
 
     info_ni = np.sort(info_idx)
     freeze_ni = np.sort(freeze_idx)
@@ -334,21 +359,28 @@ def main():
     logger.setLevel(logging.INFO)
     logger.info("#"*50)
     
-    logger.info("Partitioning the dataset")
+    logger.info(f"Partitioning the dataset: {dataset}")
+    if dataset == "cifar10":
+        data_label = "label"
+        classes = 10
+    else:
+        data_label = "fine_label"
+        classes = 100
+
     fds = FederatedDataset(
-        dataset="cifar10",
+        dataset=dataset,
         partitioners={
             "train": DirichletPartitioner(
                 num_partitions=num_nodes,
-                partition_by="label",
-                alpha=0.1,
-                seed=42,
+                partition_by=data_label,
+                alpha=alpha,
+                seed=61,
                 min_partition_size=0,
             ),
         },
     )
 
-    save_path = Path(f"results/{args.algo}")
+    save_path = Path(f"results/{dataset}/{args.algo}")
     save_path.mkdir(parents=True, exist_ok=True)
 
     result_dict = defaultdict(list)
@@ -358,8 +390,8 @@ def main():
     if args.algo == "fedavg":
         logger.info("Using FedAvg Algorithm")
 
-        nets = init_nets(num_nodes)
-        global_model = init_nets(1)[0]
+        nets = init_nets(num_nodes, classes, device)
+        global_model = init_nets(1, classes, device)[0]
         for net_i in nets:
             nets[net_i].load_state_dict(global_model.state_dict())
 
@@ -370,18 +402,18 @@ def main():
             np.random.shuffle(arr)
             selected = arr[:int(num_nodes * samples_per_round)]
             if((i % eval_freq != 0) and i != 0):
-                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args)
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, device, args)
 
             # Train the local model
-            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, device, args)
 
             # Transfer and aggregate the model
-            fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, gn, args)
+            fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, gn, device, args)
 
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
-                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, args)
-                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, device, args)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds, device, args)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
 
@@ -401,8 +433,8 @@ def main():
 
     elif args.algo == "fedprox":
         logger.info("Using FedProx Algorithm")
-        nets = init_nets(num_nodes)
-        global_model = init_nets(1)[0]
+        nets = init_nets(num_nodes, classes, device)
+        global_model = init_nets(1, classes, device)[0]
         for net_i in nets:
             nets[net_i].load_state_dict(global_model.state_dict())
 
@@ -413,18 +445,18 @@ def main():
             np.random.shuffle(arr)
             selected = arr[:int(num_nodes * samples_per_round)]
             if((i % eval_freq != 0) and i != 0):
-                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args)
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, device, args)
 
             # Train the local model
-            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, device, args)
 
             # Transfer and aggregate the model
-            fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, gn, args)
+            fed_avg(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, gn, device, args)
 
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
-                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, args)
-                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, device, args)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds, device, args)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
 
@@ -444,8 +476,8 @@ def main():
 
     elif args.algo == "fedper":
         logger.info("Using FedPer Algorithm")
-        nets = init_nets(num_nodes)
-        global_model = init_nets(1)[0]
+        nets = init_nets(num_nodes, classes, device)
+        global_model = init_nets(1, classes, device)[0]
         personalized_pred_list = ["mlp_head.0.weight", "mlp_head.0.bias", "mlp_head.1.weight", "mlp_head.1.bias"]
         for i in range(comm_round):
             logger.info(f">>>>>> Round {i} <<<<<<")
@@ -454,18 +486,18 @@ def main():
             np.random.shuffle(arr)
             selected = arr[:int(num_nodes * samples_per_round)]
             if((i % eval_freq != 0) and i != 0):
-                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args, personalized_pred_list)
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, device, args, personalized_pred_list)
 
             # Train the local model
-            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, device, args)
 
             # Transfer and aggregate the model
-            fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, personalized_pred_list, gn, args)
+            fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, personalized_pred_list, gn, device, args)
 
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
-                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, args, personalized_pred_list)
-                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, device, args, personalized_pred_list)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds, device, args)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
 
@@ -485,8 +517,8 @@ def main():
         
     elif args.algo == "fedbn":
         logger.info("Using FedBN Algorithm")
-        nets = init_nets(num_nodes)
-        global_model = init_nets(1)[0]
+        nets = init_nets(num_nodes, classes, device)
+        global_model = init_nets(1, classes, device)[0]
         fedbn_list = []
         global_para_keys = list(global_model.state_dict().keys())
         for key in global_para_keys:
@@ -500,18 +532,18 @@ def main():
             np.random.shuffle(arr)
             selected = arr[:int(num_nodes * samples_per_round)]
             if((i % eval_freq != 0) and i != 0):
-                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, args, fedbn_list)
+                broadcast_parameters(nets, selected, loss_rate, info_ni, freeze_ni, gn, device, args, fedbn_list)
 
             # Train the local model
-            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, args)
+            net_freq = local_train_net_per(nets, selected, fds, epochs, logger, device, args)
 
             # Transfer and aggregate the model
-            fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, fedbn_list, gn, args)
+            fedper(nets, selected, global_model, loss_rate, info_ni, freeze_ni, net_freq, fedbn_list, gn, device, args)
 
             # Evaluate the model
             if (i+1) >= test_round and (i+1) % eval_freq == 0:
-                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, args, fedbn_list)
-                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds)
+                broadcast_parameters(nets, arr, loss_rate, info_ni, freeze_ni, gn, device, args, fedbn_list)
+                test_results, test_avg_loss, test_avg_acc, test_all_acc = compute_accuracy_loss(nets, fds, device, args)
                 logger.info(f">> Global Model Test accuracy: {test_avg_acc}")
                 logger.info(f">> Global Model Test avg loss: {test_avg_loss}")
 

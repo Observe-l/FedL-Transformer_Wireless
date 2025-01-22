@@ -1,9 +1,10 @@
 import struct
+import gc
 import torch
 import numpy as np
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
-from cython_decoder import cython_sc_decoding
+from decoder_cuda import decoder_cuda
 
 def get_gn(length:int, device):
     n = int(np.log2(length))
@@ -56,6 +57,9 @@ def codeword_generate(array_dict, data_idx, gn):
     split_bit = torch.tensor(np.array(split_bit), dtype=torch.float32).to("cuda:0")
     tmp_codeword = torch.matmul(split_bit, gn) % 2
     codeword = np.array(tmp_codeword.cpu().detach().numpy(), dtype=np.int8)
+    del split_bit, tmp_codeword
+    gc.collect()
+    torch.cuda.empty_cache()
     return codeword, codeword_idx, bit_array_len
 
 def packet_diffusion(codeword):
@@ -71,7 +75,7 @@ def encoder_udp(array_dict, data_idx, gn):
     udp_packet = packet_diffusion(codeword)
     return udp_packet, codeword_idx, bit_array_len, codeword.shape[0]
 
-def packet_aggregation(udp_packet, codeword_num, data_idx, freeze_idx, codeword_idx, bit_array_len):
+def decoding(udp_packet, codeword_num, data_idx, freeze_idx, codeword_idx, bit_array_len, chunk_size=10000):
     udp_idx = []
     packet_del = []
     for tmp_packet in udp_packet:
@@ -80,38 +84,31 @@ def packet_aggregation(udp_packet, codeword_num, data_idx, freeze_idx, codeword_
     packet_del = np.array(packet_del)
     packet_data = np.ones((1024, codeword_num)) * 0.5
     packet_data[udp_idx] = packet_del
-
     restore_codeword = packet_data.T
-    decode_partial = partial(decoding, freeze_idx=freeze_idx, data_idx=data_idx)
-    with ProcessPoolExecutor() as executor:
-        decoding_data = np.array(list(executor.map(decode_partial, restore_codeword)),dtype=np.int8)
-    del executor, decode_partial
+
+    codeword_torch = torch.tensor(restore_codeword, dtype=torch.float32).to("cuda:0")
+    bit_array = 1 - 2 * codeword_torch.flatten()
+    lr0 = torch.exp(-(bit_array - 1)**2)
+    lr1 = torch.exp(-(bit_array + 1)**2)
+    lr0_post = lr0 / (lr0 + lr1)
+    lr1_post = lr1 / (lr0 + lr1)
+
+    lr0_post = lr0_post.cpu().detach().numpy().astype(np.float64)
+    lr1_post = lr1_post.cpu().detach().numpy().astype(np.float64)
+    delete_num = 1024 - restore_codeword.shape[1]
+    hd_dec = np.zeros_like(bit_array.cpu().detach().numpy()).astype(np.float64)
+    frozen_val = np.zeros(len(freeze_idx), dtype=np.float64)
+    del codeword_torch, bit_array, lr0, lr1
+    gc.collect()
+    torch.cuda.empty_cache()
+    hd_dec_result = decoder_cuda(lr0_post, lr1_post, freeze_idx.astype(np.float64), hd_dec, 1024, 10, len(freeze_idx), frozen_val, delete_num, 0, restore_codeword.shape[0], chunk_size)
+
+    hd_dec_result = hd_dec_result.reshape(restore_codeword.shape).astype(np.int8)
+    hd_dec_result = hd_dec_result[:,data_idx]
+
     restore_array = []
     for i, array_len in enumerate(bit_array_len):
-        tmp_array = np.concatenate(decoding_data[codeword_idx[i]:codeword_idx[i+1]])[:array_len]
+        tmp_array = np.concatenate(hd_dec_result[codeword_idx[i]:codeword_idx[i+1]])[:array_len]
         bit_array = np.packbits(tmp_array)
         restore_array.append(np.frombuffer(bit_array.tobytes(), dtype=np.float32))
     return restore_array
-
-
-def decoding(bit_array, freeze_idx, data_idx):
-    # Prepare the necessary arrays and values
-    bit_array = 1-2*bit_array
-    lr0 = np.exp(-(bit_array - 1)**2)
-    lr1 = np.exp(-(bit_array + 1)**2)
-    lr0_post = lr0 / (lr0 + lr1)
-    lr1_post = lr1 / (lr0 + lr1)
-    delete_num = 1024 - len(bit_array)
-    hd_dec = np.zeros(1024, dtype=np.float64)
-    frozen_val = np.zeros(len(freeze_idx), dtype=np.float64)
-    pro_prun = np.zeros((1, 2 * 1024 + 1), dtype=np.float64)
-
-    # Call the optimized Cython function
-    i_scen_sum, hd_dec_result = cython_sc_decoding(
-        lr0_post, lr1_post, freeze_idx.astype(np.float64),
-        hd_dec, 1024, 10, len(freeze_idx), frozen_val, delete_num, 0, pro_prun
-    )
-
-    # Extract the output for data_idx from hd_dec_result
-    data_out = hd_dec_result[data_idx]
-    return data_out
