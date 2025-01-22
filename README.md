@@ -38,6 +38,9 @@ python3 main.py --algo=fedbn \
         --loss_mode=zero
 
 python3 main.py --algo=fedavg \
+        --dataset=cifar100 \
+        --gpu=cuda:0 \
+        --alpha=0.1 \
         --num_nodes=50 \
         --samples_per_round=0.1 \
         --comm_round=300 \

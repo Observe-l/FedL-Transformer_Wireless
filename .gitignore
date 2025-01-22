@@ -6,3 +6,4 @@ results/
 figure_data/
 deletion error correction code/
 *.npz
+*.so

@@ -174,11 +174,11 @@ def local_train_net_per(nets, selected, fds, epochs, logger, device, args):
 
 def coding_transfer(net_dict, info_ni, freeze_ni, loss_rate, gn, device):
     # Generate the udp packet from the UDP client
-    udp_packet, codeword_idx, bit_array_len, codeword_num = encoder_udp(net_dict, info_ni, gn)
+    udp_packet, codeword_idx, bit_array_len, codeword_num = encoder_udp(net_dict, info_ni, gn, device)
 
     # Recover the udp packet at the UDP server
     received_packet = [packet for packet in udp_packet if np.random.rand() > loss_rate]
-    restore_array = decoding(received_packet, codeword_num, info_ni, freeze_ni, codeword_idx, bit_array_len)
+    restore_array = decoding(received_packet, codeword_num, info_ni, freeze_ni, codeword_idx, bit_array_len, device)
     restore_dict = {name: torch.tensor(restore_array[i].reshape(net_dict[name].shape)).to(device) for i, name in enumerate(net_dict)}
 
     return restore_dict

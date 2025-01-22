@@ -44,7 +44,7 @@ def udp_packet_to_numpy_array(packet, codeword_num):
     bit_array = bit_array[:codeword_num]
     return bit_array
 
-def codeword_generate(array_dict, data_idx, gn):
+def codeword_generate(array_dict, data_idx, gn, device):
     split_bit = []
     codeword_idx = []
     bit_array_len = []
@@ -54,7 +54,7 @@ def codeword_generate(array_dict, data_idx, gn):
         split_bit.extend(current_array)
         codeword_idx.append(codeword_idx[-1] + current_idx)
         bit_array_len.append(array_len)
-    split_bit = torch.tensor(np.array(split_bit), dtype=torch.float32).to("cuda:0")
+    split_bit = torch.tensor(np.array(split_bit), dtype=torch.float32).to(device)
     tmp_codeword = torch.matmul(split_bit, gn) % 2
     codeword = np.array(tmp_codeword.cpu().detach().numpy(), dtype=np.int8)
     del split_bit, tmp_codeword
@@ -70,12 +70,12 @@ def packet_diffusion(codeword):
     udp_packet = [struct.pack("I", idx) + udp_numpy[idx].tobytes() for idx in range(udp_numpy.shape[0])]
     return udp_packet
 
-def encoder_udp(array_dict, data_idx, gn):
-    codeword, codeword_idx, bit_array_len = codeword_generate(array_dict, data_idx, gn)
+def encoder_udp(array_dict, data_idx, gn, device):
+    codeword, codeword_idx, bit_array_len = codeword_generate(array_dict, data_idx, gn, device)
     udp_packet = packet_diffusion(codeword)
     return udp_packet, codeword_idx, bit_array_len, codeword.shape[0]
 
-def decoding(udp_packet, codeword_num, data_idx, freeze_idx, codeword_idx, bit_array_len, chunk_size=10000):
+def decoding(udp_packet, codeword_num, data_idx, freeze_idx, codeword_idx, bit_array_len, device, chunk_size=10000):
     udp_idx = []
     packet_del = []
     for tmp_packet in udp_packet:
@@ -86,7 +86,7 @@ def decoding(udp_packet, codeword_num, data_idx, freeze_idx, codeword_idx, bit_a
     packet_data[udp_idx] = packet_del
     restore_codeword = packet_data.T
 
-    codeword_torch = torch.tensor(restore_codeword, dtype=torch.float32).to("cuda:0")
+    codeword_torch = torch.tensor(restore_codeword, dtype=torch.float32).to(device)
     bit_array = 1 - 2 * codeword_torch.flatten()
     lr0 = torch.exp(-(bit_array - 1)**2)
     lr1 = torch.exp(-(bit_array + 1)**2)
